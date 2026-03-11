@@ -1,0 +1,92 @@
+\documentclass[oupdraft]{bio}
+% \usepackage[colorlinks=true, urlcolor=citecolor, linkcolor=citecolor, citecolor=citecolor]{hyperref}
+\usepackage{url}
+\usepackage{hyperref} 
+\usepackage{float}
+% Add history information for the article if required
+\history{}
+
+\begin{document}
+
+% Title of paper
+\title{Enhancing comorbidity network inference with risk-enriched health trajectories embedding}
+
+% List of authors, with corresponding author marked by asterisk
+\author{Nicole Fontana$\ast$$^{1,2}$, Alessia Mapelli$\ast$$^{1,2}$, Emanuele Di Angelantonio$^{2}$, Francesca Ieva$^{1,2}$\\[4pt]
+% Author addresses
+\textit{$^1$MOX, Department of Mathematics, Politecnico di Milano, Milan, Italy}\\
+\textit{$^2$Health Data Science Research Centre, Human Technopole, Milan, Italy}
+\\[2pt]
+% E-mail address for correspondence
+{alessia.mapelli@polimi.it}\\
+\textit{$^\ast$These authors contributed equally to this work.}}
+
+
+% Running headers of paper:
+\markboth%
+% First field is the short list of authors
+{N. Fontana and A. Mapelli}
+% Second field is the short title of the paper
+{Enhancing comorbidity network inference }
+
+\maketitle
+
+% Add a footnote for the corresponding author if one has been
+% identified in the author list
+\footnotetext{To whom correspondence should be addressed.}
+
+\begin{abstract}
+{Comorbidity networks provide crucial insights into disease relationships, yet traditional approaches relying on cross-sectional prevalence data face critical limitations: they overlook temporal disease progression, inadequately address confounding, and require arbitrary thresholding for network sparsification. We develop a comprehensive statistical framework that addresses these limitations through three methodological innovations. First, we adapt Word2Vec embeddings to longitudinal patient sequences, fine-tuning pretrained biomedical embeddings to learn representations that jointly encode temporal progression patterns and semantic disease relationships. Second, we introduce a confounding adjustment framework by jointly embedding diseases and risk factors, enabling explicit quantification of confounding by comparing risk-adjusted and unadjusted similarity networks. Third, we employ Gaussian Graphical Models with Lasso regularization to estimate conditional independence structure, providing sparsification without arbitrary thresholding. We apply this framework to UK Biobank data comprising 113,973 participants, focusing on 24 cardiometabolic diseases and 76 risk factors. The risk-adjusted network showed reduced connectivity among cardiometabolic diseases, indicating effective control for confounding effects. This finding was further confirmed by a validation analysis showing that pairs with larger changes in similarity systematically shared more risk factors. The analysis of the sparse network identified atrial fibrillation, acute kidney injury, and coronary disease as hub diseases with critical bridging functions. Community detection recovered three clinically meaningful modules aligned with established cardiometabolic taxonomy. Our framework demonstrates that integrating longitudinal data with explicit risk factor adjustment and advanced representation learning enhances the clinical validity of disease network analyses, providing a generalizable approach for more accurate characterization of multimorbidity patterns.}
+{Comorbidity network; Longitudinal data; Word2Vec embeddings; Confounding adjustment; Gaussian Graphical Models; Cardiometabolic diseases}
+\end{abstract}
+
+
+\section{Introduction}\label{sec:introduction}
+\input{Introduction}
+
+\section{Data and phenotype definition}\label{sec:data}
+\input{Data}
+
+\section{Method}\label{sec:method}
+\input{Method}
+
+\section{Results}\label{sec:results}
+\input{Results}
+
+\section{Discussion}\label{sec:discussion}
+\input{Discussion}
+
+
+%\section{Software}
+%\label{sec5}
+%Software in the form of R code, together with a sample input data set and complete documentation is available on request from the corresponding author (eaheron@tcd.ie).
+
+
+%\section{Supplementary Material}
+%\label{sec6}
+
+%Supplementary material is available online at
+% \href{http://biostatistics.oxfordjournals.org}%
+% {http://biostatistics.oxfordjournals.org}.
+%\url{http://biostatistics.oxfordjournals.org}.
+
+
+\section*{Acknowledgments}
+The present research has been supported by MUR, grant Dipartimento di Eccellenza 2023- 2027.
+F. Ieva acknowledges the National Plan for NRRP Complementary Investments "Advanced Technologies for Human-centred Medicine" (PNC0000003). We also thank Carlo Andrea Pivato and Laura Savaré for their support in the phenotype definitions.
+\\
+{\it Conflict of Interest}: None declared.
+
+\section*{Data sharing}
+UKB data are accessible for health-related research in the public interest. This study used data from the UKB Resource under Application Number 102297.
+
+
+\newpage
+\section*{Supplementary Material}
+\input{Supplementary material}
+
+\bibliographystyle{biorefs}
+\bibliography{bibliography}
+
+
+\end{document}
