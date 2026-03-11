@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+*.egg
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# Environment
+.env
+.venv/
+env/
+venv/
+
+# Trained models (large binary files — not tracked)
+pubmed_mesh_test
+pubmed_mesh_test.bin
+pubmed_mesh_finetuned_main
+pubmed_mesh_finetuned_main_par
+*.model
+*.model.wv.vectors.npy
+*.model.trainables.syn1neg.npy
+
+# Generated outputs (reproducible from notebook)
+plots/
+results_GGM/
+Baseline/
+sequence_main_final.csv
+sequence_main_parr_final.csv
+phrase_embeddings_main_par_df.csv
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.sublime-project
