@@ -1,8 +1,8 @@
 # Comorbidity Network Analysis Pipeline
 
 > Code repository for:
-> **"Comorbidity networks via sequence embedding and Gaussian graphical models"**
-> *(Mapelli A. et al., Biostatistics Journal)*
+> **"Enhancing comorbidity network inference with risk-enriched health trajectories embedding"**
+> *(Fontana N. & Mapelli A., Di Angelantonio E., Ieva F.)*
 
 This repository provides a fully reproducible Python pipeline for constructing and analysing **cardiometabolic comorbidity networks** from patient event sequences. The approach uses:
 
@@ -163,12 +163,7 @@ pip install -r requirements.txt
 If you use this code, please cite:
 
 ```bibtex
-@article{mapelli2025comorbidity,
-  title   = {Comorbidity networks via sequence embedding and Gaussian graphical models},
-  author  = {Mapelli, A. and others},
-  journal = {Biostatistics},
-  year    = {2025}
-}
+@article{}
 ```
 
 ---
