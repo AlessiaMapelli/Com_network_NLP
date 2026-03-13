@@ -1,4 +1,4 @@
-# Comorbidity Network Analysis Pipeline
+# Risk-adjusted cardiometabolic comorbidity network inference
 
 > Code repository for:
 > **"Enhancing comorbidity network inference with risk-enriched health trajectories embedding"**
