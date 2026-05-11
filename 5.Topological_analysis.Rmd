@@ -1,0 +1,349 @@
+---
+title: "Network Analysis Report"
+subtitle: "Risk-adjusted cariometabolic network"
+author: "Nicole Fontana & Alessia Mapelli"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    code_folding: hide
+    theme: flatly
+    fig_width: 10
+    fig_height: 8
+  pdf_document:
+    toc: true
+    fig_width: 10
+    fig_height: 8
+params:
+  OUTPUT_RES_DIR: "results"
+  OUTPUT_PLOT_DIR: "plots"
+  community_detection_algorithm: "cfg_weighted" 
+  #OPTIONS: 
+  # - cfg: Community structure via greedy optimization of modularity;
+  # - cfg_weighted: Community structure via greedy optimization of modularity considering the weights of the edges; 
+  # - leid: Community structure by multi-level optimization of modularity; 
+  # - leid_weighted:Community structure by multi-level optimization of modularity considering the weights of the edges; 
+  # - btw_cluster:Community structure detection based on edge betweenness.
+  color_net_plots: "#FFA420"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE, 
+  warning = FALSE, 
+  message = FALSE,
+  fig.align = 'center',
+  cache = FALSE
+)
+
+# Load required libraries
+library(igraph)
+library(tidygraph)
+library(ggraph)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(backbone)
+library(RColorBrewer)
+library(poweRlaw)
+library(knitr)
+library(kableExtra)
+```
+
+```{r load-data}
+# Set working directory and load data setwd(params$base_output_dir)
+
+original_data_path= file.path(params$OUTPUT_RES_DIR, "cardiomet_risk_adj_embeddings.csv")
+net_res_path= paste0(params$OUTPUT_RES_DIR, "/GGM_adj_main_par_full.RData")
+outcome_of_interest= "Baseline"
+foldname <- file.path(params$OUTPUT_PLOT_DIR, "/network_analysis")
+dir.create(foldname, recursive = TRUE, showWarnings = FALSE)
+
+# Load network results
+cat("Loading network estimation results from:", net_res_path, "\n")
+load(net_res_path)
+cat("Loading data from:", original_data_path, "\n")
+data <- read.csv(original_data_path, header = TRUE, stringsAsFactors = FALSE)
+
+
+# Extract results
+est_adj_matrix <- results$results$Dic_adj_matrics
+events_names <- colnames(results$additional_info$z)
+
+cat("Analysis for outcome:", outcome_of_interest, "\n")
+cat("Number of diseases and risk factor:", length(events_names), "\n")
+cat("Number of diseases:", length(disease_names), "\n")
+```
+
+# 1. Network Construction and Basic Properties
+
+```{r network-construction}
+# Create network from precision matrix
+outcome_df <- est_adj_matrix[[outcome_of_interest]]
+fix_col <- function(name) {
+  name <- gsub("\\.\\.", ", ", name, perl = TRUE)
+  name <- gsub("\\.", " ", name, perl = TRUE)
+  name <- gsub("\\s+", " ", name, perl = TRUE)
+  trimws(name)
+}
+rownames(outcome_df) <- fix_col(rownames(outcome_df))
+colnames(outcome_df) <- fix_col(colnames(outcome_df))
+outcome_matrix <- as.matrix(abs(outcome_df))
+cat("Matrix is symmetric:", isSymmetric(outcome_matrix, check.attributes = FALSE), "\n")
+
+disease_names <- fix_col(disease_names)
+
+# Create igraph object
+g_est <- graph_from_adjacency_matrix(
+  outcome_matrix, 
+  mode = "undirected", 
+  diag = FALSE, 
+  weighted = TRUE, 
+  add.colnames = NA, 
+  add.rownames = NULL
+)
+
+g_abs <- induced_subgraph(g_est, vids = disease_names, impl = "copy_and_delete")
+
+# Basic network statistics
+edge_density_val <- edge_density(g_abs, loops = FALSE)
+diameter_val <- diameter(g_abs, directed = FALSE, weights = NA)
+
+network_stats <- data.frame(
+  Metric = c("Nodes", "Edges", "Edge Density", "Diameter"),
+  Value = c(
+    vcount(g_abs),
+    ecount(g_abs),
+    round(edge_density_val, 4),
+    diameter_val
+  )
+)
+
+kable(network_stats, caption = "Basic Network Statistics") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+
+cat("Nodes (V):", vcount(g_abs), "\n")
+cat("Edges (E):", ecount(g_abs), "\n")
+cat("Edge density:", round(edge_density_val, 4), "\n")
+cat("Diameter:", diameter_val, "\n")
+```
+
+## Network Visualization
+
+```{r network-plots, fig.width=12, fig.height=6}
+# Create layout
+layout <- layout_nicely(g_abs)
+
+# Save basic network plot
+plot_name <- file.path(foldname, "Plot_comoribity_graph.png")
+png(filename = plot_name, width = 3000, height = 3000, res = 400)
+plot(g_abs,
+     layout = layout,
+     edge.arrow.size = 1,
+     vertex.color = params$color_net_plots,
+     vertex.size = 10,
+     vertex.frame.color = params$color_net_plots,
+     vertex.label.color = "black",
+     vertex.label.cex = 0.5,
+     vertex.label.dist = 0,
+     edge.curved = 0.2,
+     edge.color = "gray60",
+     edge.width = 0.1,
+     margin = c(0, 0, 0, 0))
+dev.off()
+
+plot_name <- file.path(foldname, "Plot_comoribity_graph.svg")
+svg(plot_name, width = 10, height = 10)
+par(mar = c(0, 0, 0, 0))
+plot(g_abs,
+     layout = layout,
+     edge.arrow.size = 1,
+     vertex.color = params$color_net_plots,
+     vertex.size = 10,
+     vertex.frame.color = params$color_net_plots,
+     vertex.label.color = "black",
+     vertex.label.cex = 0.8,
+     vertex.label.dist = 0,
+     edge.curved = 0.2,
+     edge.color = "gray60",
+     edge.width = 0.1,
+     margin = c(0, 0, 0, 0))
+dev.off()
+
+
+# Display plots in report
+par(mfrow = c(1, 1))
+plot(g_abs,
+     layout = layout,
+     edge.arrow.size = 1,
+     vertex.color = params$color_net_plots,
+     vertex.size = 10,
+     vertex.frame.color = params$color_net_plots,
+     vertex.label.color = "black",
+     vertex.label.cex = 0.5,
+     vertex.label.dist = 0,
+     edge.curved = 0.2,
+     edge.color = "gray60",
+     edge.width = 0.1,
+     margin = c(0, 0, 0, 0),
+     main = "Risk-adjusted comorbidity network")
+```
+
+## Edge Weight Distribution
+
+```{r edge-distribution}
+# Analyze edge weights
+UP <- outcome_matrix[upper.tri(outcome_matrix, diag = FALSE)]
+non_zero_edges <- sum(UP != 0)
+
+edge_stats <- data.frame(
+  Statistic = c("Min", "1st Qu.", "Median", "Mean", "3rd Qu.", "Max", "Non-zero edges"),
+  Value = c(summary(UP), non_zero_edges)
+)
+
+kable(edge_stats, caption = "Edge Weight Statistics", digits = 4) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+
+# Plot edge weight distribution
+par(mfrow = c(1, 2))
+hist(UP, breaks = 100, main = "Edge Weight Distribution", xlab = "Edge Weight", col = params$color_net_plots)
+plot(density(UP), main = "Edge Weight Density", xlab = "Edge Weight", col = params$color_net_plots, lwd = 2)
+```
+
+# 3. Community Detection
+```{r community-detection-helper-function}
+run_community_detection <- function(g_undir, method) {
+  community_obj <- switch(
+    method,
+    "cfg" = cluster_fast_greedy(g_undir, weights = NA),
+    "cfg_weighted" = cluster_fast_greedy(g_undir),
+    "leid" = cluster_leiden(
+      g_undir,
+      objective_function = "modularity",
+      weights = NA
+    ),
+    "leid_weighted" = cluster_leiden(
+      g_undir,
+      objective_function = "modularity"
+    ),
+    "btw_cluster" = cluster_edge_betweenness(
+      g_undir,
+      weights = NA
+    ),
+    stop(
+      "Unknown community detection algorithm: ", method,
+      "\nChoose one of: cfg, cfg_weighted, leid, leid_weighted, btw_cluster"
+    )
+  )
+  return(community_obj)
+}
+```
+
+```{r community-detection, fig.width=10, fig.height=8}
+# Community detection using fast greedy algorithm
+community_obj <- run_community_detection(
+  as.undirected(g_abs),
+  params$community_detection_algorithm
+)
+V(g_abs)$community <- community_obj$membership
+
+num_communities <- length(unique(V(g_abs)$community))
+cat("Number of communities detected:", num_communities, "\n")
+
+# Community size distribution
+community_sizes <- table(V(g_abs)$community)
+community_stats <- data.frame(
+  Community = names(community_sizes),
+  Size = as.numeric(community_sizes)
+)
+
+kable(head(community_stats[order(community_stats$Size, decreasing = TRUE), ], 10), 
+      caption = "Top 10 Largest Communities", row.names = FALSE) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+
+# Create color palette for communities
+num_colors <- length(unique(V(g_abs)$community))
+colrs <- colorRampPalette(brewer.pal(min(12, num_colors), "Pastel1"))(num_colors)
+
+# Save community plot
+plot_name <- file.path(foldname, "Plots_comoribity_graph_communities.png")
+png(filename = plot_name, width = 3000, height = 3000, res = 400)
+plot(g_abs,
+     layout = layout,
+     edge.arrow.size = 1,
+     vertex.color = colrs[V(g_abs)$community],
+     vertex.size = 5,
+     vertex.frame.color = colrs[V(g_abs)$community],
+     vertex.label.color = "black",
+     vertex.label.cex = 0.5,
+     edge.curved = 0.2,
+     edge.color = "gray60",
+     edge.width = 0.1,
+     margin = c(0, 0, 0, 0))
+dev.off()
+
+plot_name <- file.path(foldname, "Plots_comoribity_graph_communities.svg")
+svg(plot_name, width = 10, height = 10)
+par(mar = c(0, 0, 0, 0))
+plot(g_abs,
+     layout = layout,  # same layout object
+     edge.arrow.size = 0.2,
+     vertex.color = colrs[V(g_abs)$community],
+     vertex.size = 8,
+     vertex.frame.color = colrs[V(g_abs)$community],
+     vertex.frame.width = 1,
+     vertex.label.color = "black",
+     vertex.label.cex = 1,
+     vertex.label.family = "sans",
+     edge.curved = 0.2,
+     edge.color = grDevices::adjustcolor("gray60", alpha.f = 0.6),
+     edge.width = 0.7,
+     margin = 0)
+dev.off()
+
+
+# Display community plot in report
+plot(g_abs,
+     layout = layout,
+     edge.arrow.size = 1,
+     vertex.color = colrs[V(g_abs)$community],
+     vertex.size = 5,
+     vertex.frame.color = colrs[V(g_abs)$community],
+     vertex.label.color = "black",
+     vertex.label.cex = 0.5,
+     edge.curved = 0.2,
+     edge.color = "gray60",
+     edge.width = 0.1,
+     margin = c(0, 0, 0, 0),
+     main = paste("Community Structure (", num_communities, "communities)"))
+```
+
+# 4. Node Centrality Analysis
+
+```{r centrality-analysis}
+# Calculate centrality measures
+node_topology_summary <- data.frame(
+  Node = V(g_abs)$name,
+  Community = V(g_abs)$community
+)
+
+idx <- match(node_topology_summary$Node, V(g_abs)$name)
+
+# Calculate various centrality measures
+deg <- degree(g_abs, mode = "all")
+node_topology_summary$centrality_degree <- deg[idx]
+
+
+node_topology_summary$betweenness <- as.numeric(betweenness(
+  g_abs, 
+  directed = FALSE, 
+  weights = NA
+)[idx])
+
+
+write.csv(node_topology_summary, file = file.path(params$OUTPUT_RES_DIR,"Node_Community_detection_centrality.csv"), row.names = F)
+
+cat("Network analysis summary:\n")
+node_topology_summary
+```
