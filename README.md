@@ -53,7 +53,7 @@ Com_network_NLP/
 | 1 | `1.Sequence_preprocessing.ipynb` | Python | Build chronologically ordered disease and risk-factor sequences; filter cohort |
 | 2 | `2.Word_embedding.ipynb` | Python | Fine-tune BioWordVec on patient sequences; extract disease and risk-factor embeddings |
 | 3 | `3.Prior_clinical_knowledge.ipynb` | Python | Compute differential similarity matrix; detect and validate confounders; build prior knowledge matrix |
-| 4 | `4.Network_estimation.R` | R | Estimate sparse GGM network using Lasso neighbourhood selection with confounder priors |
+| 4 | `4.Network_estimation.R` | R | Estimate sparse GGM network using Lasso neighbourhood selection with confounder priors; plot binary adjacency matrix; compute and plot the percentage of patients exhibiting each connected disease transition |
 | 5 | `5.Topological_analysis.Rmd` | R | Compute centrality measures; detect disease communities via modularity optimisation |
 | — | `Downstream_analysis.Rmd` | R | Build community transition matrices; cluster patients via k-means; Kaplan–Meier survival analysis |
 
@@ -178,6 +178,19 @@ TOP_N_PAIRS = <95th percentile cutoff>
 # "highly affected" and analysed for shared confounders.
 # Default is all pairs above the 95th percentile of absolute changes.
 ```
+
+### Step 4 — `4.Network_estimation.R` (top configuration block)
+
+```r
+OUTPUT_RES_DIR  = "results"    # folder for intermediate outputs (RData, CSV)
+OUTPUT_PLOT_DIR = "plots"      # folder for figures
+color_net_plots = "#FFA420"    # fill colour used in the adjacency matrix heatmap
+```
+
+This script produces three outputs in addition to the GGM model itself:
+- `plots/disease_adj_matrix_GGM_heatmap.svg/.png` — binary lower-triangle heatmap showing which disease pairs have an estimated edge
+- `plots/disease_adj_matrix_GGM_heatmap_transition_percentage.svg/.png` — heatmap showing, for each connected disease pair, the percentage of patients who exhibit at least one consecutive transition between the two diseases in their event sequence
+- `results/GGM_transition_analysis.RData` — R objects `adj_GGM_df`, `transition_counts`, and `transition_percentage` for downstream use
 
 ### Step 5 — `5.Topological_analysis.Rmd` (YAML params block at the top of the file)
 
