@@ -19,16 +19,15 @@ if (!dir.exists(OUTPUT_RES_NET_PATH)) {
 }
 
 #######################
-# Step 1 - Network estimation
+# Step 1 - Normality assumption check
 #######################
+
 # 1.1 Load libraries, GMM functions and inputs
 library(readr)
 library(dplyr)
 library(tidyr)
 library(ggplot2)
-
 source("functions/ggReg_main_functions.R")
-
 data_path <- file.path(OUTPUT_RES_DIR, "cardiomet_risk_adj_embeddings.csv")
 if (!file.exists(data_path)) {
   stop("Data file not found. Please check the path: ", data_path)
@@ -38,7 +37,22 @@ sequence_main_final <- read_csv(file.path(OUTPUT_RES_DIR,"sequence_main_final.cs
 disease_names <- sort(unique(sequence_main_final$event_name))
 conf_matrix <- read_csv(file.path(OUTPUT_RES_DIR,"GGM_prior_clinical_knowledge_input.csv"))
 
-# 1.2 Run GMM model and store the results
+shapiro_test_results <- rep(NA, ncol(emb_data))
+
+for(i in 1:ncol(emb_data)){
+  shapiro_test <- shapiro.test(emb_data[, i])
+  cat("Shapiro-Wilk test p-value:", shapiro_test$p.value, "\n")
+  shapiro_test_results[i] <- shapiro_test$p.value
+}
+
+cat("\n Disease for which the normality assumprions id rejected: \n")
+non_normal_scores <- colnames(emb_data)[shapiro_test_results<0.05]
+print(non_normal_scores)
+
+
+#######################
+# Step 2 - Network estimation
+#######################
 results <- GGReg_full_estimation(x = emb_data, # data, nrow: subjects; ncol: features.
                                  scr = TRUE, # TRUE, include prior clinical knowledge
                                  scr_matrix = conf_matrix, #Matrix describing the prior clinical knowledge
