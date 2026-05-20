@@ -1,0 +1,444 @@
+---
+title: "Downstream analysis"
+subtitle: "Trajectory-based patient clustering and survival"
+author: "Nicole Fontana & Alessia Mapelli"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    theme: flatly
+    highlight: tango
+    code_folding: hide
+  pdf_document:
+    toc: true
+    toc_depth: '3'
+params:
+  OUTPUT_RES_DIR: "results"
+  OUTPUT_PLOT_DIR: "plots"
+  OUTCOME_FILE_PATH: "data_simulated/survival_outcome_simulated.csv" #DF with three cols ID Event_time, Event_status
+  MAPPING_COM_PATH: "sim_mapping_communities.csv" #DF with two columns: community_number, community_name. If not avaible leave empty
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo    = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width  = 10,
+  fig.height = 6
+)
+```
+
+```{r libraries}
+library(dplyr)
+library(readr)
+library(tidyr)
+library(tibble)
+library(ggplot2)
+library(cluster)      
+library(knitr)
+library(kableExtra)
+library(RColorBrewer)
+library(patchwork)
+library(scales)
+library(survival)
+library(survminer)
+library(gridExtra)  
+library(plotly)      
+```
+
+------------------------------------------------------------------------
+
+# Step 0 - Data Loading & Preparation
+
+```{r load-data}
+# Set working directory and load data setwd(params$base_output_dir)
+sequence_main_final <- read_csv(file.path(params$OUTPUT_RES_DIR,"sequence_main_final.csv"))
+survival_endpoint <- read.csv(params$OUTCOME_FILE_PATH)
+
+node_topology_summary <- read.csv(file.path(params$OUTPUT_RES_DIR,"Node_Community_detection_centrality.csv"))
+# Community label mapping
+if(params$MAPPING_COM_PATH != ""){
+  community_labels <- read.csv(params$MAPPING_COM_PATH)
+node_topology_summary <- left_join(node_topology_summary,community_labels, join_by("Community"=="community_number"))
+} else{
+  node_topology_summary$community_name <- paste0("COM_",node_topology_summary$Community)
+}
+n_com <- length(unique(node_topology_summary$community_name))
+node_topology_summary %>%
+  select(Node, Community, community_name) %>%
+  arrange(Community) %>%
+  kable(caption = "Disease-to-community assignment") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+# Step 1 - Community Transition Matrix
+
+```{r transition-matrix}
+# 1.1: Ordered sequence with community labels
+seq_comm_clean <- sequence_main_final %>%
+  left_join(node_topology_summary, join_by("event_name"=="Node")) %>%
+  filter(!is.na(community_name)) %>%
+  arrange(ID, age_in_days_since_born)
+
+seq_ordered <- seq_comm_clean %>%
+  select(ID, age_in_days_since_born, community_name)
+
+comm_levels <- levels(as.factor(node_topology_summary$community_name))
+
+# 1.2: Consecutive (from, to) pairs
+transitions <- seq_ordered %>%
+  group_by(ID) %>%
+  mutate(from = community_name, to = lead(community_name)) %>%
+  filter(!is.na(to)) %>%
+  ungroup()
+
+# 1.3: Count per patient
+trans_counts <- transitions %>%
+  mutate(
+    from = factor(from, levels = comm_levels),
+    to   = factor(to,   levels = comm_levels)
+  ) %>%
+  group_by(ID, from, to, .drop = FALSE) %>%
+  summarise(n = n(), .groups = "drop")
+
+# 1.4: Pivot to n^2-dim vector (nxn matrix flattened)
+trans_wide <- trans_counts %>%
+  mutate(trans_name = paste0("T_", as.integer(from), "_", as.integer(to))) %>%
+  select(ID, trans_name, n) %>%
+  pivot_wider(names_from = trans_name, values_from = n, values_fill = 0)
+
+all_trans <- paste0("T_", rep(1:n_com, each = n_com), "_", rep(1:n_com, times = n_com))
+for (col in setdiff(all_trans, colnames(trans_wide))) trans_wide[[col]] <- 0
+trans_wide <- trans_wide %>% select(ID, all_of(all_trans))
+
+# 1.5: Row-normalise
+trans_mat      <- as.matrix(trans_wide[, -1])
+row_sums       <- rowSums(trans_mat)
+trans_mat_norm <- trans_mat / ifelse(row_sums == 0, 1, row_sums)
+
+# Average transition matrix (all patients)
+avg_trans_df <- data.frame(
+  from = factor(rep(comm_levels, each  = n_com), levels = comm_levels),
+  to   = factor(rep(comm_levels, times = n_com), levels = comm_levels),
+  prob = colMeans(trans_mat_norm)
+)
+
+p <- ggplot(avg_trans_df, aes(x = to, y = from, fill = prob)) +
+  geom_tile(colour = "white", linewidth = 0.8) +
+  geom_text(aes(label = sprintf("%.3f", prob)), size = 3.8) +
+  scale_fill_distiller(palette = "Blues", direction = 1,
+                        name = "Normalized \ntransition mean") +
+  labs(title = "Average community transition matrix (all patients)",
+       subtitle = "Row = origin community, Column = destination community",
+       x = "To", y = "From") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 25, hjust = 1))
+
+ggsave(
+  filename = file.path(params$OUTPUT_PLOT_DIR, "Average_community_transition_matrix.svg"),
+  plot = p,
+  width = 10,
+  height = 10
+)
+
+ggsave(
+  filename = file.path(params$OUTPUT_PLOT_DIR, "Average_community_transition_matrix.png"),
+  plot = p,
+  width = 8,
+  height = 6,
+  units = "in",
+  dpi = 400
+)
+
+p
+
+```
+
+# Step 2 - Transition based patient clustering
+
+## 2.1 Elbow for transition-matrix clustering
+
+```{r transition-elbow}
+set.seed(42)
+wss_trans <- sapply(1:8, function(k) {
+  kmeans(trans_mat_norm, centers = k, nstart = 10, iter.max = 100)$tot.withinss
+})
+
+data.frame(k = 1:8, wss = wss_trans) %>%
+  ggplot(aes(x = k, y = wss)) +
+  geom_line() + geom_point(size = 2) +
+  scale_x_continuous(breaks = 1:8) +
+  labs(title = "Elbow – transition matrix clustering",
+       x = "k", y = "Total within-cluster SS") +
+  theme_bw()
+```
+
+*USER-INPUT NECESSARY: looking at the wlbow plot select k_chosen*
+
+```{r user-defined k}
+k_chosen=4
+```
+
+## 2.2 K-means on transition matrices
+
+```{r transition-kmeans}
+set.seed(42)
+km_trans <- kmeans(trans_mat_norm, centers = k_chosen,
+                   nstart = 50, iter.max = 200)
+
+trans_wide[, all_trans] <- trans_mat_norm
+
+trans_wide <- trans_wide %>%
+  mutate(cluster_trans = factor(km_trans$cluster,
+                                 labels = paste0("Cluster ", seq_len(k_chosen))))
+
+# Mean transition matrix per cluster
+ p <- trans_wide %>%
+  group_by(cluster_trans) %>%
+  summarise(across(all_of(all_trans), mean), .groups = "drop") %>%
+  pivot_longer(-cluster_trans, names_to = "transition", values_to = "mean_prob") %>%
+  tidyr::separate(transition, into = c("drop", "from_idx", "to_idx"),
+                  sep = "_", extra = "merge") %>%
+  mutate(
+    from = factor(comm_levels[as.integer(from_idx)], levels = comm_levels),
+    to   = factor(comm_levels[as.integer(to_idx)],   levels = comm_levels)
+  ) %>%
+  ggplot(aes(x = to, y = from, fill = mean_prob)) +
+  geom_tile(colour = "white", linewidth = 0.5) +
+  geom_text(aes(label = sprintf("%.3f", mean_prob)), size = 2.8) +
+  scale_fill_distiller(palette = "Blues", direction = 1, name = "Normalized \ntransition mean") +
+  facet_wrap(~ cluster_trans) +
+  labs(title = "Average community transition matrix (by cluster)", x = "To", y = "From") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 25, hjust = 1))
+ 
+ggsave(
+  filename = file.path(params$OUTPUT_PLOT_DIR, "Average_community_transition_matrix_by_cluster.svg"),
+  plot = p,
+  width = 10,
+  height = 10
+)
+
+ggsave(
+  filename = file.path(params$OUTPUT_PLOT_DIR, "Average_community_transition_matrix_by_cluster.png"),
+  plot = p,
+  width = 8,
+  height = 6,
+  units = "in",
+  dpi = 400
+)
+
+p
+
+```
+
+
+# Step 3 - Kaplan–Meier survival by transition cluster
+
+```{r transition-survival}
+surv_df_trans <- survival_endpoint %>%
+  inner_join(trans_wide %>% select(ID,cluster_trans), by="ID")
+
+km_fit_trans <- survfit(
+  Surv(event_time / 365.25, event_status) ~ cluster_trans,
+  data = surv_df_trans
+)
+
+x_lim = c(round(min(surv_df_trans$event_time)/365.25)-10, round(max(surv_df_trans$event_time)/365.25)+10)
+
+p <- ggsurvplot(km_fit_trans,
+           data        = surv_df_trans,
+           pval        = TRUE,
+           conf.int    = TRUE,
+           risk.table  = TRUE,
+           palette     = "Pastel2",
+           xlab        = "Age (years)",
+           ylab        = "Survival probability",
+           title       = "Kaplan–Meier survival by transition matrix cluster",
+           legend.labs = levels(surv_df_trans$cluster_trans),
+           ylim        = c(0, 1),
+           xlim        = c(x_lim[1],x_lim[2]))
+
+ggsave(
+  filename = file.path(params$OUTPUT_PLOT_DIR, "Survival_by_cluster.png"),
+  plot = print(p),
+  width = 8,
+  height = 6,
+  units = "in",
+  dpi = 400
+)
+```
+
+# Step 4 - Descriptive statistics per cluster
+
+```{r trans-cluster-descriptive}
+distinct_per_comm <- seq_comm_clean %>%
+  group_by(ID, community_name) %>%
+  summarise(n_distinct = n_distinct(event_name), .groups = "drop")
+
+first_comm <- seq_comm_clean %>%
+  arrange(ID, age_in_days_since_born) %>%
+  group_by(ID) %>%
+  slice(1) %>%
+  ungroup() %>%
+  select(ID, first_community = community_name)
+ 
+profile_wide <- distinct_per_comm %>%
+  pivot_wider(names_from  = community_name,
+              values_from = n_distinct,
+              values_fill = 0) %>%
+  mutate(total_distinct=rowSums(select(., -ID), na.rm=TRUE)) %>%
+  mutate(
+  across(-c(ID, total_distinct), ~ (.x/total_distinct),.names="{.col}_prop")
+    )
+
+total_events <- seq_comm_clean %>%
+  group_by(ID) %>%
+  summarise(total_events = n(), .groups = "drop")
+
+profile_wide <- profile_wide %>%
+  left_join(total_events, by = "ID") %>%
+  inner_join(survival_endpoint, by="ID") %>%
+  inner_join(trans_wide %>% select(ID,cluster_trans), by="ID") %>%
+  left_join(first_comm, by = "ID") 
+
+entropy_fn <- function(b) { b <- b[b > 0]; -sum(b * log(b)) }
+ 
+profile_wide <- profile_wide %>%
+  rowwise() %>%
+  mutate(entropy=entropy_fn(c_across(ends_with("_prop")))) %>%
+  ungroup() %>%
+  mutate(entropy_norm = entropy / log(4))   # log(4) ≈ 1.386
+
+trans_cluster_desc <- profile_wide %>%
+  group_by(cluster_trans) %>%
+  summarise(
+    N                  = n(),
+    pct_dead           = round(100 * mean(event_status), 1),
+    age_death_yrs_mean = round(mean(event_time[event_status == 1] / 365.25, na.rm = TRUE), 1),
+    age_death_yrs_sd   = round(sd(event_time[event_status == 1] / 365.25, na.rm = TRUE), 1),
+ 
+    mean_distinct      = round(mean(total_distinct), 2),
+    sd_distinct        = round(sd(total_distinct), 2),
+    mean_total_events  = round(mean(total_events), 2),
+    sd_total_events    = round(sd(total_events), 2),
+    mean_entropy_norm  = round(mean(entropy_norm), 3),
+    sd_entropy_norm    = round(sd(entropy_norm), 3),
+ 
+    across(
+      ends_with("_prop"),
+      ~ round(mean(.x, na.rm = TRUE), 3),
+      .names = "mean_{.col}"
+    ),
+    
+    across(
+    ends_with("_prop"),
+    ~round(100*mean(.x==1, na.rm=TRUE), 1),
+    .names="pct_{.col}_only"
+    ),
+ 
+    .groups = "drop"
+  )
+
+trans_cluster_desc %>%
+  kable(caption = "Descriptive statistics per transition cluster") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+## 4.1 Boxplots: entropy, distinct diseases, total events
+
+```{r trans-cluster-boxplots}
+pt1 <- ggplot(profile_wide,
+              aes(x = cluster_trans, y = entropy_norm, fill = cluster_trans)) +
+  geom_boxplot(alpha = 0.7, outlier.size = 0.5) +
+  scale_fill_brewer(palette = "Set2") +
+  labs(title = "Normalised entropy", x = NULL, y = "Entropy") +
+  theme_bw() + theme(legend.position = "none")
+
+pt2 <- ggplot(profile_wide,
+              aes(x = cluster_trans, y = total_distinct, fill = cluster_trans)) +
+  geom_boxplot(alpha = 0.7, outlier.size = 0.5) +
+  scale_fill_brewer(palette = "Set2") +
+  labs(title = "Distinct diseases", x = NULL, y = "N") +
+  theme_bw() + theme(legend.position = "none")
+
+pt3 <- ggplot(profile_wide,
+              aes(x = cluster_trans, y = total_events, fill = cluster_trans)) +
+  geom_boxplot(alpha = 0.7, outlier.size = 0.5) +
+  scale_fill_brewer(palette = "Set2") +
+  labs(title = "Total events", x = NULL, y = "N") +
+  theme_bw() + theme(legend.position = "none")
+
+pt1 | pt2 | pt3
+```
+
+## 2.2. Mortality rate per transition cluster
+
+```{r trans-cluster-mortality-bar}
+ggplot(trans_cluster_desc,
+       aes(x = cluster_trans, y = pct_dead, fill = cluster_trans)) +
+  geom_col(alpha = 0.8, width = 0.6) +
+  geom_text(aes(label = paste0(pct_dead, "%")), vjust = -0.4, size = 4.5) +
+  scale_fill_brewer(palette = "Set2") +
+  labs(title = "Mortality rate per transition cluster",
+       x = NULL, y = "% deceased") +
+  theme_bw() + theme(legend.position = "none")
+```
+
+## 2.3 First community entered per transition cluster
+
+```{r trans-cluster-first-community}
+profile_wide %>%
+  count(cluster_trans, first_community) %>%
+  group_by(cluster_trans) %>%
+  mutate(pct = round(100 * n / sum(n), 1)) %>%
+  kable(caption = "First community entered, by transition cluster") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+## 2.4 Mean community profile per transition cluster
+
+```{r trans-cluster-profile-heatmap}
+profile_wide %>%
+  group_by(cluster_trans) %>%
+  summarise(
+    across(ends_with("_prop"), mean, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  pivot_longer(
+    -cluster_trans,
+    names_to  = "community",
+    values_to = "mean_prop"
+  ) %>%
+  mutate(
+    community = gsub("_prop$", "", community)
+  ) %>%
+  ggplot(aes(x = community, y = cluster_trans, fill = mean_prop)) +
+  geom_tile(colour = "white", linewidth = 0.8) +
+  geom_text(aes(label = sprintf("%.3f", mean_prop)), size = 4.5) +
+  scale_fill_distiller(
+    palette = "Greens",
+    direction = 1,
+    name = "Mean\nproportion"
+  ) +
+  labs(
+    title = "Mean community profile per transition cluster",
+    x = NULL,
+    y = NULL
+  ) +
+  theme_bw() +
+  theme(
+    axis.text.x = element_text(angle = 20, hjust = 1)
+  )
+```
+
+------------------------------------------------------------------------
+
+##### Session Info
+
+```{r session-info}
+sessionInfo()
+```

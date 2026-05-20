@@ -7,6 +7,7 @@ the comorbidity network analysis pipeline.
 Output files (in --output_dir):
   sequence_main_simulated.csv      — main disease events
   sequence_parallel_simulated.csv  — parallel risk-factor events
+  survival_outcome_simulated.csv   — one row per patient with death/censoring
   simulation_summary.txt           — simulation metadata
 
 Usage:
@@ -274,6 +275,80 @@ def simulate_patient_main(pid: int, rng: np.random.Generator) -> list[dict]:
     return events
 
 
+
+
+def _sigmoid(x: float) -> float:
+    """Numerically stable logistic transform."""
+    return 1.0 / (1.0 + np.exp(-x))
+
+
+def simulate_patient_survival(pid: int, main_events: list[dict],
+                              rng: np.random.Generator) -> dict:
+    """
+    Simulate a right-censored survival outcome for one patient.
+
+    The returned event_time is an age in days since birth, matching the time
+    scale used by the sequence files. If event_status == 1, event_time is the
+    simulated age at death. If event_status == 0, event_time is the simulated
+    age at loss to follow-up/admin censoring.
+    """
+    disease_names = {ev["event_name"] for ev in main_events}
+    last_event_age = max(ev["age_in_days_since_born"] for ev in main_events)
+    last_event_age_yr = last_event_age / 365.0
+
+    severe_weights = {
+        "Heart Failure": 0.50,
+        "Heart Failure, Endstage": 1.50,
+        "Heart Arrest": 1.40,
+        "Stroke": 0.80,
+        "Stroke, Hemorrhagic": 1.10,
+        "Cerebrovascular Disorders": 0.50,
+        "Acute Kidney Injury": 0.45,
+        "Kidney Diseases, Chronic, Stage 4": 0.60,
+        "Kidney Diseases, Chronic, Stage 5": 0.90,
+        "Kidney Failure, Chronic, Endstage": 1.20,
+        "Pulmonary Embolism": 0.70,
+        "Tachycardia, Ventricular": 0.90,
+        "Cardiomyopathy, Dilated": 0.60,
+    }
+    severity_score = sum(
+        weight for disease, weight in severe_weights.items()
+        if disease in disease_names
+    )
+
+    # Probability of death increases with age, multimorbidity, and severe events.
+    # Coefficients are chosen for demonstration, not clinical calibration.
+    linear_risk = (
+        -7.25
+        + 0.075 * last_event_age_yr
+        + 0.18 * len(disease_names)
+        + severity_score
+    )
+    death_probability = _sigmoid(linear_risk)
+
+    # Administrative/loss-to-follow-up time occurs after the last observed event.
+    censor_gap_days = int(rng.uniform(0.5 * 365, 8.0 * 365))
+    censor_time = min(int(AGE_MAX_YR * 365), last_event_age + censor_gap_days)
+
+    if rng.random() < death_probability:
+        # Higher-risk patients tend to die sooner after their last observed event.
+        mean_gap_days = max(90, int((5.5 * 365) / (1.0 + severity_score)))
+        death_gap_days = int(rng.exponential(mean_gap_days)) + 30
+        death_time = min(int(AGE_MAX_YR * 365), last_event_age + death_gap_days)
+
+        if death_time <= censor_time:
+            return {
+                "ID": pid,
+                "event_status": 1,
+                "event_time": death_time,
+            }
+
+    return {
+        "ID": pid,
+        "event_status": 0,
+        "event_time": censor_time,
+    }
+
 def simulate_patient_parallel(pid: int, main_events: list[dict],
                                rng: np.random.Generator) -> list[dict]:
     """Return list of parallel risk-factor event dicts for one patient."""
@@ -389,6 +464,7 @@ def simulate(n_patients: int, seed: int, output_dir: str,
 
     all_main     = []
     all_parallel = []
+    all_survival = []
     kept = 0
     attempted = 0
 
@@ -412,9 +488,11 @@ def simulate(n_patients: int, seed: int, output_dir: str,
             continue
 
         parallel_events = simulate_patient_parallel(pid, main_events, rng)
+        survival_outcome = simulate_patient_survival(pid, main_events, rng)
 
         all_main.extend(main_events)
         all_parallel.extend(parallel_events)
+        all_survival.append(survival_outcome)
         kept += 1
 
         if kept % 500 == 0:
@@ -431,16 +509,26 @@ def simulate(n_patients: int, seed: int, output_dir: str,
         .sort_values(["ID", "age_in_days_since_born"])
         .reset_index(drop=True)
     )
+    df_survival = (
+        pd.DataFrame(all_survival)
+        .sort_values("ID")
+        .reset_index(drop=True)
+    )
 
     # Save
     main_path = os.path.join(output_dir, "sequence_main_simulated.csv")
     par_path  = os.path.join(output_dir, "sequence_parallel_simulated.csv")
-    df_main.to_csv(main_path,     index=False)
-    df_parallel.to_csv(par_path,  index=False)
+    surv_path = os.path.join(output_dir, "survival_outcome_simulated.csv")
+    df_main.to_csv(main_path,       index=False)
+    df_parallel.to_csv(par_path,    index=False)
+    df_survival.to_csv(surv_path,   index=False)
 
     # Summary
     n_events_main = len(df_main)
     n_events_par  = len(df_parallel)
+    n_deaths = int(df_survival["event_status"].sum())
+    death_pct = n_deaths / n_patients * 100
+    median_followup_yr = df_survival["event_time"].median() / 365.0
     disease_counts = df_main.groupby("event_name")["ID"].nunique()
     incidence_pct  = (disease_counts / n_patients * 100).sort_values(ascending=False)
 
@@ -452,6 +540,8 @@ def simulate(n_patients: int, seed: int, output_dir: str,
         f"Patients tried:  {attempted}",
         f"Main events:     {n_events_main}",
         f"Parallel events: {n_events_par}",
+        f"Deaths:          {n_deaths} ({death_pct:.1f}%)",
+        f"Median outcome age/event_time: {median_followup_yr:.1f} years",
         f"",
         f"Disease incidence (% of patients with ≥1 event):",
     ]
@@ -465,6 +555,7 @@ def simulate(n_patients: int, seed: int, output_dir: str,
     print(f"\nDone.")
     print(f"  {main_path}  ({n_events_main} rows)")
     print(f"  {par_path}   ({n_events_par} rows)")
+    print(f"  {surv_path}  ({n_patients} rows)")
     print(f"  {summary_path}")
 
 
