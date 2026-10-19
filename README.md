@@ -295,7 +295,12 @@ The simulator reproduces the real cohort's:
 If you use this code, please cite:
 
 ```bibtex
-@article{}
+@article{fontana2026enhancing,
+  title={Enhancing comorbidity network inference with risk-enriched health trajectories embedding},
+  author={Fontana, Nicole and Mapelli, Alessia and Di Angelantonio, Emanuele and Ieva, Francesca},
+  journal={arXiv preprint arXiv:2607.04702},
+  year={2026}
+}
 ```
 
 ---
