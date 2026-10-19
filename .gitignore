@@ -34,6 +34,9 @@ sequence_main_final.csv
 sequence_main_parr_final.csv
 phrase_embeddings_main_par_df.csv
 
+#Case study
+UKB_case_study/
+
 # OS
 .DS_Store
 Thumbs.db
